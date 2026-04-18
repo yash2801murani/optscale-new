@@ -1,0 +1,3 @@
+write:
+  global:
+    max_concurrency: 20

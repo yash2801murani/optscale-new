@@ -1,0 +1,730 @@
+# OptScale – single-command Docker Compose deployment
+# Usage:  docker compose up -d
+# Requires Docker Compose v2.1+ (for service_completed_successfully condition)
+#
+# All configurable values live in .env (copy from .env.example and edit PUBLIC_IP)
+
+x-etcd-env: &etcd-env
+  HX_ETCD_HOST: etcd
+  HX_ETCD_PORT: "2379"
+
+x-app-common: &app-common
+  build:
+    context: .
+  restart: unless-stopped
+  networks:
+    - optscale
+  environment:
+    <<: *etcd-env
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+
+# ─────────────────────────────────────────────
+# NETWORKS & VOLUMES
+# ─────────────────────────────────────────────
+networks:
+  optscale:
+    driver: bridge
+
+volumes:
+  etcd-data:
+  mariadb-data:
+  mongo-data:
+  rabbitmq-data:
+  redis-data:
+  minio-data:
+  clickhouse-data:
+  influxdb-data:
+  thanos-receive-data:
+
+# ─────────────────────────────────────────────
+# SERVICES
+# ─────────────────────────────────────────────
+services:
+
+  # ── Infrastructure ──────────────────────────
+
+  etcd:
+    build:
+      context: .
+      dockerfile: docker_images/etcd/Dockerfile
+    image: optscale/etcd:local
+    restart: unless-stopped
+    networks:
+      - optscale
+    volumes:
+      - etcd-data:/etcd-data
+    command:
+      - etcd
+      - --name=etcd0
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --initial-cluster=etcd0=http://etcd:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=optscale-etcd-cluster
+      - --heartbeat-interval=500
+      - --election-timeout=5000
+    healthcheck:
+      test: ["CMD-SHELL", "etcdctl --endpoint=http://localhost:2379 cluster-health | grep 'cluster is healthy'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  mariadb:
+    image: mariadb:10.3
+    restart: unless-stopped
+    networks:
+      - optscale
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./docker_images/mariadb/mariadb.cnf:/etc/mysql/conf.d/optscale.cnf:ro
+    environment:
+      MYSQL_ROOT_PASSWORD: my-password-01
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -pmy-password-01 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  mongo:
+    image: mongo:3.6
+    restart: unless-stopped
+    networks:
+      - optscale
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: SecurePassword-01-02
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    restart: unless-stopped
+    networks:
+      - optscale
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: optscale
+      RABBITMQ_DEFAULT_PASS: secure-password-here
+      RABBITMQ_ERLANG_COOKIE: dWkhXehOApH1OHshvByfpfTf3Cd8wwkADei7mWd5JF
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  redis:
+    build:
+      context: .
+      dockerfile: docker_images/redis/Dockerfile
+    image: optscale/redis:local
+    restart: unless-stopped
+    networks:
+      - optscale
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  minio:
+    image: minio/minio:RELEASE.2020-03-19T21-49-00Z
+    restart: unless-stopped
+    networks:
+      - optscale
+    volumes:
+      - minio-data:/data
+    environment:
+      MINIO_ACCESS_KEY: optscale-minio
+      MINIO_SECRET_KEY: secret_password
+    command: ["server", "/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    restart: unless-stopped
+    networks:
+      - optscale
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./docker_images/clickhouse/users.xml:/etc/clickhouse-server/users.xml:ro
+      - ./docker_images/clickhouse/config.xml:/etc/clickhouse-server/config.xml:ro
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- 'http://localhost:8123/?query=SELECT+1' | grep -q '1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  influxdb:
+    build:
+      context: .
+      dockerfile: docker_images/influxdb/Dockerfile
+    image: optscale/influxdb:local
+    restart: unless-stopped
+    networks:
+      - optscale
+    volumes:
+      - influxdb-data:/var/lib/influxdb
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8086/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  # ── Thanos Metrics Stack ─────────────────────
+
+  thanos-receive:
+    image: thanosio/thanos:v0.39.1
+    restart: unless-stopped
+    networks:
+      - optscale
+    volumes:
+      - thanos-receive-data:/var/thanos/receive
+      - ./docker_images/thanos/thanos_conf.yaml:/etc/thanos/thanos_conf.yaml:ro
+      - ./docker_images/thanos/thanos_limits.yaml:/etc/thanos/thanos_limits.yaml:ro
+    command:
+      - receive
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --remote-write.address=0.0.0.0:19291
+      - --objstore.config-file=/etc/thanos/thanos_conf.yaml
+      - --tsdb.path=/var/thanos/receive
+      - --tsdb.retention=4h
+      - --tsdb.wal-compression
+      - --tsdb.no-lockfile
+      - --tsdb.out-of-order.time-window=1h
+      - --label=receive="thanos-receive"
+      - --receive.tenant-header=Cloud-Account-Id
+      - --receive.limits-config-file=/etc/thanos/thanos_limits.yaml
+      - --log.level=info
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O/dev/null http://localhost:10902/-/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+
+  thanos-query:
+    image: thanosio/thanos:v0.39.1
+    restart: unless-stopped
+    networks:
+      - optscale
+    command:
+      - query
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --endpoint=thanos-receive:10901
+      - --log.level=info
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O/dev/null http://localhost:10902/-/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      thanos-receive:
+        condition: service_healthy
+
+  # ── One-time Initializer ─────────────────────
+
+  configurator:
+    build:
+      context: .
+      dockerfile: docker_images/configurator/Dockerfile
+    image: optscale/configurator:local
+    restart: on-failure
+    networks:
+      - optscale
+    volumes:
+      - ./docker_images/configurator/config.yml:/config/config:ro
+    environment:
+      HX_ETCD_HOST: etcd
+      HX_ETCD_PORT: "2379"
+    depends_on:
+      etcd:
+        condition: service_healthy
+      mariadb:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+  # ── Application API Services ─────────────────
+
+  rest_api:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: rest_api/Dockerfile
+    image: optscale/rest_api:local
+    expose:
+      - "8999"
+
+  auth:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: auth/Dockerfile
+    image: optscale/auth:local
+    expose:
+      - "8905"
+    environment:
+      <<: *etcd-env
+      GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
+      GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
+      MICROSOFT_OAUTH_CLIENT_ID: "${MICROSOFT_OAUTH_CLIENT_ID:-}"
+
+  keeper:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: keeper/Dockerfile
+    image: optscale/keeper:local
+    expose:
+      - "8973"
+
+  herald:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: herald/Dockerfile
+    image: optscale/herald:local
+    expose:
+      - "8906"
+
+  katara:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: katara/katara_service/Dockerfile
+    image: optscale/katara:local
+    expose:
+      - "8935"
+
+  diproxy:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: diproxy/Dockerfile
+    image: optscale/diproxy:local
+    expose:
+      - "8935"
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      thanos-receive:
+        condition: service_healthy
+
+  insider_api:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: insider/insider_api/Dockerfile
+    image: optscale/insider_api:local
+    expose:
+      - "8945"
+
+  slacker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: slacker/Dockerfile
+    image: optscale/slacker:local
+    expose:
+      - "80"
+    environment:
+      <<: *etcd-env
+      SLACK_SIGNING_SECRET: "${SLACK_SIGNING_SECRET:-}"
+      SLACK_CLIENT_ID: "${SLACK_CLIENT_ID:-}"
+      SLACK_CLIENT_SECRET: "${SLACK_CLIENT_SECRET:-}"
+
+  jira_bus:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: jira_bus/Dockerfile
+    image: optscale/jira_bus:local
+    expose:
+      - "8977"
+
+  metroculus_api:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: metroculus/metroculus_api/Dockerfile
+    image: optscale/metroculus_api:local
+    expose:
+      - "8969"
+
+  subspector:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: subspector/Dockerfile
+    image: optscale/subspector:local
+    expose:
+      - "8800"
+
+  # ── Frontend ─────────────────────────────────
+
+  jira_ui:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: jira_ui/Dockerfile
+    image: optscale/jira_ui:local
+    expose:
+      - "4000"
+
+  ngui:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: ngui/Dockerfile
+    image: optscale/ngui:local
+    expose:
+      - "4000"
+    environment:
+      <<: *etcd-env
+      UI_BUILD_PATH: /usr/src/app/ui
+      PROXY_URL: http://nginx
+      KEEPER_ENDPOINT: http://keeper:8973
+      AUTH_ENDPOINT: http://auth:8905
+      RESTAPI_ENDPOINT: http://rest_api:8999
+      SLACKER_ENDPOINT: http://slacker:80
+      VITE_GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
+      VITE_MICROSOFT_OAUTH_CLIENT_ID: "${MICROSOFT_OAUTH_CLIENT_ID:-}"
+      VITE_GOOGLE_MAP_API_KEY: "${VITE_GOOGLE_MAP_API_KEY:-}"
+      VITE_GANALYTICS_ID: "${VITE_GANALYTICS_ID:-}"
+      VITE_HOTJAR_ID: "${VITE_HOTJAR_ID:-}"
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # ── Nginx Ingress ─────────────────────────────
+
+  nginx:
+    image: nginx:1.25.3-alpine
+    restart: unless-stopped
+    networks:
+      - optscale
+    ports:
+      - "${OPTSCALE_PORT:-80}:80"
+    volumes:
+      - ./docker_images/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - ngui
+      - rest_api
+      - auth
+      - keeper
+      - herald
+      - katara
+      - insider_api
+      - slacker
+      - metroculus_api
+      - jira_bus
+      - jira_ui
+      - diproxy
+      - subspector
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O/dev/null http://localhost/auth/v2/swagger || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── Background Workers ────────────────────────
+
+  bumiworker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: bumiworker/Dockerfile
+    image: optscale/bumiworker:local
+
+  bumischeduler:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: bumischeduler/Dockerfile
+    image: optscale/bumischeduler:local
+
+  diworker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: diworker/Dockerfile
+    image: optscale/diworker:local
+    volumes:
+      - /tmp/diworker-reports:/src/reports
+
+  katara_worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: katara/katara_worker/Dockerfile
+    image: optscale/katara_worker:local
+
+  herald_executor:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/herald_executor/Dockerfile
+    image: optscale/herald_executor:local
+
+  keeper_executor:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/keeper_executor/Dockerfile
+    image: optscale/keeper_executor:local
+
+  slacker_executor:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/slacker_executor/Dockerfile
+    image: optscale/slacker_executor:local
+
+  webhook_executor:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/webhook_executor/Dockerfile
+    image: optscale/webhook_executor:local
+
+  insider_worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: insider/insider_worker/Dockerfile
+    image: optscale/insider_worker:local
+
+  insider_scheduler:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: insider/insider_scheduler/Dockerfile
+    image: optscale/insider_scheduler:local
+
+  metroculus_worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: metroculus/metroculus_worker/Dockerfile
+    image: optscale/metroculus_worker:local
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      thanos-query:
+        condition: service_healthy
+
+  metroculus_scheduler:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: metroculus/metroculus_scheduler/Dockerfile
+    image: optscale/metroculus_scheduler:local
+
+  gemini_worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: gemini/gemini_worker/Dockerfile
+    image: optscale/gemini_worker:local
+
+  gemini_scheduler:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: gemini/gemini_scheduler/Dockerfile
+    image: optscale/gemini_scheduler:local
+
+  gemini_data_worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: gemini/gemini_data_worker/Dockerfile
+    image: optscale/gemini_data_worker:local
+
+  risp_worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: risp/risp_worker/Dockerfile
+    image: optscale/risp_worker:local
+
+  risp_scheduler:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: risp/risp_scheduler/Dockerfile
+    image: optscale/risp_scheduler:local
+
+  trapper_worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: trapper/trapper_worker/Dockerfile
+    image: optscale/trapper_worker:local
+
+  trapper_scheduler:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: trapper/trapper_scheduler/Dockerfile
+    image: optscale/trapper_scheduler:local
+
+  bi_exporter:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: bi_exporter/Dockerfile
+    image: optscale/bi_exporter:local
+
+  bi_scheduler:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/bi_scheduler/Dockerfile
+    image: optscale/bi_scheduler:local
+
+  resource_discovery:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/resource_discovery/Dockerfile
+    image: optscale/resource_discovery:local
+
+  resource_observer:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/resource_observer/Dockerfile
+    image: optscale/resource_observer:local
+
+  resource_violations:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/resource_violations/Dockerfile
+    image: optscale/resource_violations:local
+
+  booking_observer:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/booking_observer/Dockerfile
+    image: optscale/booking_observer:local
+
+  calendar_observer:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/calendar_observer/Dockerfile
+    image: optscale/calendar_observer:local
+
+  organization_violations:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/organization_violations/Dockerfile
+    image: optscale/organization_violations:local
+
+  power_schedule:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/power_schedule/Dockerfile
+    image: optscale/power_schedule:local
+
+  bailiff:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/bailiff/Dockerfile
+    image: optscale/bailiff:local
+
+  subsyncer:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/subsyncer/Dockerfile
+    image: optscale/subsyncer:local
+
+  layout_cleaner:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/layout_cleaner/Dockerfile
+    image: optscale/layout_cleaner:local
+
+  live_demo_generator:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/live_demo_generator/Dockerfile
+    image: optscale/live_demo_generator:local
+
+  cleanmongodb:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/cleanmongodb/Dockerfile
+    image: optscale/cleanmongodb:local
+
+  cleaninfluxdb:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/cleaninfluxdb/Dockerfile
+    image: optscale/cleaninfluxdb:local
+    environment:
+      <<: *etcd-env
+      HX_INFLUXDB_HOST: influxdb
+      HX_INFLUXDB_PORT: "8086"
+      HX_DAYS_TO_STORE: "90"
+
+  demo_org_cleanup:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: docker_images/demo_org_cleanup/Dockerfile
+    image: optscale/demo_org_cleanup:local
