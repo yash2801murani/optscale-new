@@ -11,6 +11,7 @@ x-etcd-env: &etcd-env
 x-app-common: &app-common
   build:
     context: .
+  pull_policy: build
   restart: unless-stopped
   networks:
     - optscale
@@ -50,6 +51,7 @@ services:
       context: .
       dockerfile: docker_images/etcd/Dockerfile
     image: optscale/etcd:local
+    pull_policy: build
     restart: unless-stopped
     networks:
       - optscale
@@ -132,6 +134,7 @@ services:
       context: .
       dockerfile: docker_images/redis/Dockerfile
     image: optscale/redis:local
+    pull_policy: build
     restart: unless-stopped
     networks:
       - optscale
@@ -185,6 +188,7 @@ services:
       context: .
       dockerfile: docker_images/influxdb/Dockerfile
     image: optscale/influxdb:local
+    pull_policy: build
     restart: unless-stopped
     networks:
       - optscale
@@ -261,6 +265,7 @@ services:
       context: .
       dockerfile: docker_images/configurator/Dockerfile
     image: optscale/configurator:local
+    pull_policy: build
     restart: on-failure
     networks:
       - optscale
