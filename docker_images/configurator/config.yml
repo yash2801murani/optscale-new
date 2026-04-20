@@ -52,7 +52,7 @@ etcd:
     registration: []
     failed_import_email: []
   secret:
-    cluster: ""
+    cluster: "bebeadf5e7fb25a82395016ac198d860fcb18217f2f9c18a22fd4deb97b57c6e"
     agent: ""
   images_source:
     host: ""
@@ -166,7 +166,7 @@ etcd:
     rows_limit: 10000
     archive_enable: ""
     file_max_rows: 10000
-  disable_email_verification: ""
+  disable_email_verification: "True"
   force_aws_edp_strip: ""
   encryption_salt: ""
   encryption_salt_auth: ""

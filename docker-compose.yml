@@ -333,6 +333,19 @@ services:
     image: optscale/herald:local
     expose:
       - "8906"
+    environment:
+      <<: *etcd-env
+      HERALD_SERVICE: api
+
+  herald_engine:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: herald/Dockerfile
+    image: optscale/herald:local
+    environment:
+      <<: *etcd-env
+      HERALD_SERVICE: engine
 
   katara:
     <<: *app-common
@@ -342,6 +355,9 @@ services:
     image: optscale/katara:local
     expose:
       - "8935"
+    environment:
+      <<: *etcd-env
+      HX_KATARA_ROLE: api
 
   diproxy:
     <<: *app-common
@@ -417,6 +433,9 @@ services:
     image: optscale/jira_ui:local
     expose:
       - "4000"
+    environment:
+      <<: *etcd-env
+      UI_BUILD_PATH: /usr/src/app/ui
 
   ngui:
     <<: *app-common
